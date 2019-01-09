@@ -1,0 +1,183 @@
+---
+title: "Data Science Project - Milestone Report"
+author: "S Nenning"
+date: "9 December 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+## Synopsis
+
+This is the milestone report for the Data Science Spezialiation Capstone project **'Developing a Data Product for Predictive Text'**.  
+This doucment is published on **rpubs.com** <http://rpubs.com> and contains:  
+ - data load and exploratory analysis of the data set showing high level summary  
+ - data cleansing in preparation of text mining  
+ - initial text mining (n-gram analysis) and plotting of most frequent terms, and  
+ - an outlook of developing data product with prediction algorithm and Shiny app.  
+
+## Data Exploratory Analysis
+The data set for building the data product is downloaded from the provided location [Capstone Dataset](htthetps://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip), saved and extracted in working directory. The data set contains blogs, twitter, and news text in English, German, Russian and Finnish.
+
+### Loading data set
+Firstly, the required **R packages** are loaded. Package **tm** and **RWeka** is used for text mining.
+```{r setup_2, warnings = FALSE}
+#loading libaries used in code
+library(stringr)
+library(tm)
+library(RWeka)
+library(ggplot2)
+```
+
+The code below is to load English (en_US) data to R for exporatory analysis.
+```{r get data, cache=TRUE}
+#define connections and read lines
+con_blogs <- file("en_US.blogs.txt", "r") 
+con_twitter <- file("en_US.twitter.txt", "r") 
+con_news <- file("en_US.news.txt", "r") 
+blog <- readLines(con_blogs, skipNul = TRUE)
+twitter <- readLines(con_twitter, skipNul = TRUE)
+news <- readLines(con_news, skipNul = TRUE)
+
+#close connections
+close(con_blogs)
+close(con_twitter)
+close(con_news)
+```
+
+### Word and line count of data set
+As the first step of the data exploration, the number of lines and and word count of the loaded data is analysed. The calculated parameters *count_words* and *count_lines* are stored in a dataframe. The loaded text is assigned to a list and a function used for computing the word count. 
+```{r data_exploratory_1, cache=TRUE}
+#store parameters in datafreame; define df with source, line count, word count
+df <- data.frame(text_source = c("blog", "twitter", "news"), count_lines = NA, count_words = NA)
+#put text into a list
+list_text <- list(blog = blog, twitter = twitter, news = news)
+#use function to get word count for texts
+f_count_word <- function(list_text) { sum(str_count(list_text, "\\S+")) }
+# get line count and word count for each text
+df$count_lines <- sapply(list_text, length)
+df$count_words <- sapply(list_text, f_count_word)
+#display table with parameter count
+noquote(df)
+```
+
+### Preprocessing of data
+The data set has >30 millions words for blogs, news, and twitter text each. I reduce the data to a 5 percent random sample for the text mining exercise.
+```{r data_prepr, cache= TRUE}
+set.seed(175)
+percent <- 0.05
+l_sample <- lapply(list_text, function (x) rbinom(x, 1, percent))
+# create a empty list
+list_sample <- list(blog = NA, twitter = NA, news = NA)
+# create sample list from original list
+for (i in 1:length(list_text)) {
+  list_sample[[i]] <- list_text[[i]][l_sample[[i]] == 1]
+}
+
+df_sample <- data.frame(text_source = c("blog", "twitter", "news"), count_lines = NA, count_words = NA)
+df_sample$count_lines <- sapply(list_sample, length) 
+df_sample$count_words <- sapply(list_sample, f_count_word)
+noquote(df_sample)
+```
+
+### Data cleansing
+I'm using tm package for creating a text corpus from the sample data and its cleansing. HashTags, Url links, numbers, punctation, stopswords etc are removed. The data cleansing will be further reviewed for final project.
+```{r data_cleansing, cache-FALSE}
+
+### create corpus classs
+corpus_text <- VCorpus(VectorSource(list_sample))
+
+removeURL <- function(x) gsub("http:[[:alnum:]]*", "", x)
+removeHashTags <- function(x) gsub("#\\S+", "", x)
+removeTwitterHandles <- function(x) gsub("@\\S+", "", x)
+
+# transformations for cleansing
+
+ corpus_text_clean <- tm_map(corpus_text, content_transformer(removeURL))
+ corpus_text_clean <- tm_map(corpus_text_clean, content_transformer(removeHashTags))
+ corpus_text_clean <- tm_map(corpus_text_clean, content_transformer(removeTwitterHandles))
+ 
+ corpus_text_clean <- tm_map(corpus_text_clean, content_transformer(tolower))
+ corpus_text_clean <- tm_map(corpus_text_clean, content_transformer(removeNumbers))
+ corpus_text_clean <- tm_map(corpus_text_clean, content_transformer(removePunctuation))
+ corpus_text_clean <- tm_map(corpus_text_clean, content_transformer(stripWhitespace))
+ corpus_text_clean <- tm_map(corpus_text_clean, removeWords, stopwords("english"))
+```
+
+### Analysis of n-grams
+Predictive text is build on n-grams; a consecutive sequence of words. I am creating n-grams in a format of *DocumentTermMatrix* using **RWeka** and **tm** package.  
+n-grams for 1 word (unigram), 2 consecutive words (bigram),and 3 consecutive words (trigram) are created.
+```{r n-gram}
+# tokenize into n-grams
+UnigramTokenizer <- function(x) {RWeka::NGramTokenizer(x, RWeka::Weka_control(min = 1, max = 1))}
+BigramTokenizer <- function(x) {RWeka::NGramTokenizer(x, RWeka::Weka_control(min = 2, max = 2))}
+TrigramTokenizer <- function(x) {RWeka::NGramTokenizer(x, RWeka::Weka_control(min = 3, max = 3))}
+
+#creating uni-grams
+unigram_DTM <- tm::DocumentTermMatrix(corpus_text_clean, control = list(tokenize = UnigramTokenizer))
+
+#bi-grams
+bigram_DTM <- tm::DocumentTermMatrix(corpus_text_clean, control = list(tokenize = BigramTokenizer))
+
+#tri-grams
+trigram_DTM <- tm::DocumentTermMatrix(corpus_text_clean, control = list(tokenize = TrigramTokenizer))
+```
+
+As a next steps, the n-grams are put into dataframes with the n-gram terms most frequent in the sample text plotted (top 10)
+
+```{r dataframe_freq}
+# put into data frame
+
+#create data frame for uni-grams
+unigram_DTM <- sort(colSums(as.matrix(unigram_DTM)),decreasing = TRUE)
+df_unigram_DTM <- data.frame(word = names(unigram_DTM), frequency = unigram_DTM)
+#head(df_unigram_DTM, 10)
+
+#create data frame for bi-grams
+bigram_DTM <- sort(colSums(as.matrix(bigram_DTM)),decreasing = TRUE)
+df_bigram_DTM <- data.frame(word = names(bigram_DTM), frequency = bigram_DTM)
+#head(df_bigram_DTM, 10)
+
+#create data frame for tri-grams
+trigram_DTM <- sort(colSums(as.matrix(trigram_DTM)),decreasing = TRUE)
+df_trigram_DTM <- data.frame(word = names(trigram_DTM), frequency = trigram_DTM)
+#head(df_trigram_DTM, 10)
+```
+
+### Plotting n-gram
+Please find below plots for the most frequent n-grams.
+```{r plots}
+library(ggplot2)
+n <-10
+# Plot for uni-gram
+df_unigram_top <-  head(df_unigram_DTM, n)
+
+g_unigram_top <- ggplot(df_unigram_top, aes(x = reorder(word,frequency), y = frequency))
+g_unigram_top <- g_unigram_top + geom_bar(stat = "identity") +coord_flip()  + xlab("Term") + ylab("Frequency") + labs(title = "Most Frequent Uni-gram")
+g_unigram_top
+
+# Plot for bi-gram
+df_bigram_top <-  head(df_bigram_DTM, n)
+
+g_bigram_top <- ggplot(df_bigram_top, aes(x = reorder(word,frequency), y = frequency))
+g_bigram_top <- g_bigram_top + geom_bar(stat = "identity") +coord_flip()  + xlab("Term") + ylab("Frequency") + labs(title = "Most Frequent bi-gram")
+g_bigram_top
+
+# Plot for tri-gram
+df_trigram_top <-  head(df_trigram_DTM, n)
+
+g_trigram_top <- ggplot(df_trigram_top, aes(x = reorder(word,frequency), y = frequency))
+g_trigram_top <- g_trigram_top + geom_bar(stat = "identity") +coord_flip()  + xlab("Term") + ylab("Frequency") + labs(title = "Most Frequent tri-gram")
+g_trigram_top
+```
+
+
+## Outlook for predictive text data product development
+The developed data product will have n-gram directories and a user interface allowing to enter text.
+After text is entered, the most likely next word options are displayed based on rules like.  
+ - last 2 words are used to predict next word using tri-gram directory  
+ - if no tri-gram found with matching first 2 words then last word used get next word from bi-gram directory.  
+ - if none found, then display most frequent unigram.
+ 
